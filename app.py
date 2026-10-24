@@ -149,16 +149,6 @@ def main():
         st.session_state.detection_message = message
 
     st.subheader('1. Check calibration')
-    if st.button('Auto-detect plot area'):
-        try:
-            for key, value in zip(BOUND_KEYS, detect_plot_area(im)):
-                st.session_state[key] = int(value)
-            st.session_state.detection_message = 'Plot borders detected. Check the green rectangle.'
-            if source == 'Upload':
-                st.session_state.detection_message += ' ' + fill_axis_fields(im, detect_plot_area(im))
-                st.session_state.approved_calibration = None
-        except ValueError as exc:
-            st.session_state.detection_message = str(exc)
     st.info(st.session_state.detection_message)
     with st.expander('Adjust plot rectangle (pixels)', expanded=False):
         st.caption(f'Image: {width} × {height} pixels. Origin is the top-left corner; exclude labels and legends.')
@@ -189,7 +179,7 @@ def main():
         extraction_error = None
     except ValueError as exc:
         df, extraction_error = None, str(exc)
-    st.image(preview, width='stretch')
+    st.image(preview, width=750)
     st.markdown(
         '<div style="display:flex;gap:24px;flex-wrap:wrap;font-size:0.875rem;margin:4px 0 16px;">'
         '<span><span style="display:inline-block;width:14px;height:10px;border:2px solid #00a050;'
@@ -217,8 +207,10 @@ def main():
 
     st.subheader('2. Inspect the recovered series')
     history = go.Figure(go.Scatter(x=df.time, y=df.value, name='Recovered series', mode='lines+markers', marker_size=4))
-    history.update_layout(xaxis_title='Time', yaxis_title='Value', height=300, margin=dict(t=20,b=20))
-    st.plotly_chart(history, width='stretch')
+    history.update_layout(xaxis_title='Time', yaxis_title='Value',
+                          xaxis_range=[axes[0], axes[1]], yaxis_range=[axes[2], axes[3]],
+                          height=380, margin=dict(t=20))
+    st.plotly_chart(history, width=850)
     if source != 'Upload':
         truth = pd.read_csv(ROOT/'sample_images'/f'{source}.csv')
         if count == len(truth) and np.allclose(axes, [0,59,0,100]):
@@ -254,14 +246,14 @@ def main():
     cols[0].metric(f'MAE · {horizon}-step ahead', f'{selected["MAE"]:.3f}')
     cols[1].metric(f'RMSE · {horizon}-step ahead', f'{selected["RMSE"]:.3f}')
     cols[2].metric('Historical failure rate', f'{selected["Historical failure rate"]:.1%}')
-    st.caption(f'Based on {len(terminal)} rolling origins at lead time {horizon}. Failure = absolute error > {tolerance:g}.')
+    st.caption(f'Based on {len(terminal)} rolling origins at lead time {horizon}.')
     if len(terminal) < 20:
         st.warning('Fewer than 20 validation origins: the failure rate is based on limited evidence.')
     if model != 'Naive' and selected['MAE'] >= naive['MAE']:
         st.info(f'The naive baseline matches or beats {model} at this lead time. A more complex model does not always forecast better.')
     times = df.time.iloc[-1] + np.arange(1,horizon+1)*(axes[1]-axes[0])/(count-1)
     forecast = pd.DataFrame({'time':times, 'forecast':future})
-    fig = go.Figure(go.Scatter(x=df.time,y=y,name='Recovered history'))
+    fig = go.Figure(go.Scatter(x=df.time,y=y,name='History'))
     fig.add_trace(go.Scatter(x=np.r_[df.time.iloc[-1],times], y=np.r_[y[-1],future], name=model+' forecast', line=dict(dash='dash'), mode='lines+markers'))
     fig.add_vline(x=float(df.time.iloc[-1]), line_dash='dot', line_color='gray')
     fig.update_layout(xaxis_title='Time', yaxis_title='Value', height=380, margin=dict(t=20))

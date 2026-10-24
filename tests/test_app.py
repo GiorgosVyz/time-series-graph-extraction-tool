@@ -27,7 +27,7 @@ def test_demo_interactions():
     app.number_input(key='plot_left').set_value(660).run()
     assert not app.exception
     assert app.warning
-    app.button[0].click().run()
+    app.number_input(key='plot_left').set_value(60).run()
     assert not app.exception
     assert len(app.metric) == 3
     app.selectbox(key='image_source').select('wave').run()
@@ -75,8 +75,6 @@ def test_upload_confirmation_and_changed_settings():
         assert len(app.checkbox) == 0
         assert app.number_input(key='xmax').value == 59.
         assert app.number_input(key='observations').value == 60
-        app.button[0].click().run()
-        assert app.number_input(key='xmax').value == 59.
         app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric) == 3
