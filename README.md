@@ -16,13 +16,15 @@ python -m streamlit run app.py
 python -m pytest -q
 ```
 
-Select a built-in sample first. For uploads, enter the plotting rectangle in image pixels, numerical axis endpoints, curve color, and the number of original equally spaced observations. Inspect the red-point overlay before forecasting. Export recovered values and backtest results as CSV.
+The app opens on a working trend demo. Plot boundaries and the dominant saturated curve color are suggested when an image is loaded. Check the green border and red recovered points; adjust coordinates and color if necessary. Uploads require confirmation of numerical axis endpoints and the original observation count before forecasting. Example axis values are starting placeholders, not detected values. Each new image resets calibration to avoid carrying values over from another chart.
+
+Export recovered observations, future forecasts, and rolling backtest results as CSV. Forecast controls update interactively; cached backtests avoid refitting when only the error tolerance changes.
 
 ## Architecture and methodology
 
-`extraction.py` thresholds RGB color distance, selects the largest connected component, takes median curve rows per column, and interpolates onto a user-specified regular time grid. Linear calibration reverses the downward pixel y-axis. Coverage checks reject incomplete curves. Manual calibration is intentional: automatic OCR and axis detection are outside this initial scope.
+`extraction.py` thresholds RGB color distance, selects the largest connected component, takes median curve rows per column, and interpolates onto a user-specified regular time grid. Linear calibration reverses the downward pixel y-axis. Coverage checks reject incomplete curves. Plot-area detection uses morphological filters to find long dark horizontal and vertical lines and requires support along all four borders. It selects the largest supported rectangle and rejects similarly sized competing areas. The result is a suggestion, not a confidence guarantee: decorative frames can also match. Charts with only two axes, faint or broken borders, or multiple panels may need manual coordinates. Numeric axis values still require manual entry; OCR is not implemented.
 
-`forecasting.py` provides damped Holt linear trend via Statsmodels and a last-value naive baseline. At each origin only the historical prefix is fitted; every complete validation fold predicts the same horizon. Errors are actual minus predicted. MAE, RMSE and failure rates are shown per lead time. The baseline also reports pooled metrics. No forecasting model selection is performed using future values.
+`forecasting.py` provides damped Holt linear trend via Statsmodels with explicit estimated initialization and a last-value naive baseline. Constant series use the constant forecast directly. At each origin only the historical prefix is fitted; every complete validation fold predicts the same horizon. Errors are actual minus predicted. Headline MAE, RMSE and failure rates compare the selected model and naive baseline at the requested terminal lead time, using identical validation origins. A detail table reports each intermediate lead time, with a histogram of terminal errors. Fewer than 20 origins triggers a limited-evidence notice; 20 is a UI heuristic, not a statistical sufficiency guarantee. No automatic model selection is performed using future values.
 
 A failure is absolute error strictly greater than the selected tolerance. The observed proportion estimates historical failure probability for each lead time. It cannot determine an exact probability for a future forecast. Overlapping folds share observations and errors are dependent; small counts and distribution shifts reduce reliability. Extraction error is not quantified by forecast backtesting. Prediction intervals are deferred until a separate calibration/coverage evaluation can be implemented.
 
@@ -32,7 +34,9 @@ Clean, single, continuous colored curves on linear numeric axes. Crop out legend
 
 ## Validation and samples
 
-`generate_samples.py` reproducibly creates three PNG charts and original CSV data: trend, wave, and level shift. All use plot rectangle (60,30,660,330), time 0–59, values 0–100 and 60 observations. Tests compare extracted values with ground truth (MAE below one value unit), check calibration endpoints, finite Holt forecasts, naive rolling alignment, prefix invariance after changing future observations, metric calculations and invalid inputs.
+`generate_samples.py` reproducibly creates three PNG charts and original CSV data: trend, wave, and level shift. All use plot rectangle (60,30,660,330), time 0–59, values 0–100 and 60 observations. Tests compare extracted values with ground truth (MAE below one value unit), check border/color suggestions, short and constant Holt series, rolling alignment, prefix invariance for both models after changing future observations, metric calculations and invalid inputs. The app also displays sample extraction MAE when the sample axes and observation count are used.
+
+Streamlit interaction tests exercise startup, eight-observation inputs, model switching, invalid-calibration recovery, image switching and empty uploads. These tests need local loopback sockets. Verified locally: **28 tests passed**, on Python 3.13 with Streamlit 1.66.1 and Statsmodels 0.15.0. This is functional validation, not a guarantee for arbitrary chart styles.
 
 ## Submission
 
