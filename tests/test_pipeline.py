@@ -32,7 +32,7 @@ def test_metrics_and_invalid():
     with pytest.raises(ValueError): backtest(np.arange(10),5,8)
 
 
-def test_holt():
+def test_ets():
     assert np.isfinite(predict(np.arange(20),4)).all()
 
 
@@ -53,7 +53,7 @@ def test_detect_rejects_blank_and_unframed():
         detect_plot_area(image)
 
 @pytest.mark.parametrize('n', [4, 8, 20])
-def test_holt_short_and_constant(n):
+def test_ets_short_and_constant(n):
     assert np.isfinite(predict(np.arange(n, dtype=float), 3)).all()
     assert np.array_equal(predict(np.repeat(7., n), 3), [7., 7., 7.])
 
@@ -66,7 +66,7 @@ def test_invalid_horizon(horizon):
         backtest(np.arange(10), horizon, 4)
 
 
-def test_backtest_list_and_no_holt_leakage():
+def test_backtest_list_and_no_ets_leakage():
     y = list(np.arange(15, dtype=float))
     before = backtest(y, 2, 6)
     changed = y[:6] + [v+100 for v in y[6:]]
