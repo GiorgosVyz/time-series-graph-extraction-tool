@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
-from extraction import extract, detect_plot_area, suggest_curve_color
+from extraction import extract, detect_plot_area, suggest_curve_color, suggest_observation_count
 from forecasting import predict, backtest, summarize, MODELS, ARIMA_MIN_TRAIN
 from calibration import read_calibration
 from time_axis import (KINDS, KEYS, REVERSE_KEYS, FREQUENCIES, display_time, forecast_labels, parse_bounds,
@@ -16,6 +16,7 @@ from time_axis import (KINDS, KEYS, REVERSE_KEYS, FREQUENCIES, display_time, for
 ROOT = Path(__file__).parent
 BOUND_KEYS = ['plot_left', 'plot_top', 'plot_right', 'plot_bottom']
 AXIS_KEYS = ['xmin', 'xmax', 'ymin', 'ymax']
+DEFAULT_EXTRACTION_POINTS = 100
 
 
 @st.cache_data(show_spinner=False, max_entries=24)
@@ -23,14 +24,25 @@ def detect_axis_values(image, bounds):
     return read_calibration(image, bounds)
 
 
+@st.cache_data(show_spinner=False, max_entries=24)
+def detect_point_count(image, bounds):
+    try:
+        return suggest_observation_count(image,bounds,suggest_curve_color(image,bounds))
+    except ValueError:
+        return None
+
+
 def fill_axis_fields(image, bounds):
     """Optional OCR failure must not prevent manual extraction."""
+    marker_count = detect_point_count(image,tuple(bounds))
     try:
         with st.spinner('Reading chart axes…'):
             result = detect_axis_values(image, tuple(bounds))
         for key, value in zip(AXIS_KEYS, result['axes']):
             st.session_state[key] = value
-        st.session_state.observations = result['count']
+        detected_count = marker_count if marker_count is not None else result['count']
+        st.session_state.detected_observation_count = detected_count
+        st.session_state.observations = detected_count if detected_count is not None else DEFAULT_EXTRACTION_POINTS
         axis = result.get('time_axis', {'kind':'numeric', 'start':result['axes'][0], 'end':result['axes'][1]})
         st.session_state.detected_time_axis = axis
         st.session_state.time_kind = KEYS[axis['kind']]
@@ -43,11 +55,14 @@ def fill_axis_fields(image, bounds):
         if any(value is None for value in result['axes']):
             return 'Some axis labels could not be read reliably. Fill in the missing values below.'
         period_note = ' The period is estimated from month/year ticks.' if axis.get('estimated_period') else ''
-        if result['count'] is None:
-            return 'Axis values detected. Enter the original observation count below.' + period_note
-        return 'Axis values detected. Observation count suggested from visible tick labels; check it matches your chart.' + period_note
+        if detected_count is None:
+            return 'Axis values detected.' + period_note
+        count_source = 'visible point markers' if marker_count is not None else 'axis labels'
+        return f'Axis values detected. Point count suggested from {count_source}; check it matches your chart.' + period_note
     except Exception:
         logging.getLogger(__name__).warning('Automatic axis reading failed', exc_info=True)
+        st.session_state.detected_observation_count = marker_count
+        st.session_state.observations = marker_count if marker_count is not None else DEFAULT_EXTRACTION_POINTS
         return 'Automatic axis reading is unavailable. You can enter the values below.'
 
 
@@ -132,8 +147,8 @@ def main():
     if min(height, width) < 20:
         st.error('The image is too small to digitize. Use a larger chart.')
         return
-    image_id = hashlib.sha256(im.tobytes() + str(im.shape).encode() + source.encode() + b'open-chart-v2').hexdigest()
-    calibration_keys = BOUND_KEYS + ['ymin', 'ymax', 'observations', 'curve_color', 'time_kind', 'observation_frequency']
+    image_id = hashlib.sha256(im.tobytes() + str(im.shape).encode() + source.encode() + b'auto-sampling-v4').hexdigest()
+    calibration_keys = BOUND_KEYS + ['ymin', 'ymax', 'observations', 'curve_color', 'time_kind', 'observation_frequency', 'detected_observation_count']
     if (st.session_state.get('calibration_image') != image_id
             or any(key not in st.session_state for key in calibration_keys)):
         st.session_state.calibration_image = image_id
@@ -154,7 +169,8 @@ def main():
         for key, value in zip(['xmin', 'xmax', 'ymin', 'ymax'], axis_defaults):
             st.session_state[key] = value
         st.session_state.curve_color = color
-        st.session_state.observations = None if source == 'Upload' else 60
+        st.session_state.observations = DEFAULT_EXTRACTION_POINTS if source == 'Upload' else 60
+        st.session_state.detected_observation_count = None if source == 'Upload' else 60
         st.session_state.time_kind = 'Numeric'
         st.session_state.observation_frequency = 'Unknown'
         st.session_state.axis_editor_kind = 'Numeric'
@@ -207,9 +223,16 @@ def main():
     if kind == 'date':
         time_axis['has_time_labels'] = bool(time_axis.get('has_time_labels') or ':' in start_text or ':' in end_text)
     cols = st.columns([2, 1])
-    count = cols[0].number_input('Number of original observations', 5, 300, value=None, key='observations', placeholder='From your chart',
-                                help='Suggested from dense, regularly spaced labels. Check the original sample count; tick labels do not always mark every observation.')
+    count = cols[0].number_input('Extraction points', 5, 300, key='observations',
+                                help='Uses the suggested original count when detectable; otherwise starts with 100 evenly spaced samples. You can adjust it. Sampling more points does not recover more original observations.')
     color = cols[1].color_picker('Curve color', key='curve_color')
+    detected_count = st.session_state.detected_observation_count
+    sampled = detected_count is None or count != detected_count
+    time_axis.update(sampled=sampled,extraction_points=count)
+    if detected_count is None:
+        st.caption(f'Original count unknown. Using {count} evenly spaced samples.')
+    elif sampled:
+        st.caption(f'Using {count} evenly spaced samples; the suggested original count was {detected_count}.')
     with st.expander('Advanced extraction settings'):
         distance = st.slider('Color tolerance', 10, 200, 90)
     rgb = tuple(int(color[i:i+2], 16) for i in (1,3,5))
@@ -241,7 +264,7 @@ def main():
         '<span><span style="display:inline-block;width:14px;height:10px;border:2px solid #00a050;'
         'margin-right:7px;" aria-hidden="true"></span>Plot boundary</span>'
         '<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
-        f'background:{point_color};margin-right:7px;" aria-hidden="true"></span>Recovered observations</span>'
+        f'background:{point_color};margin-right:7px;" aria-hidden="true"></span>Extracted points</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -249,15 +272,13 @@ def main():
         if time_error and (start_text or end_text):
             st.warning(time_error)
         st.button('Extract series', type='primary', disabled=True,
-                  help='Enter the four axis limits and original observation count above to continue.')
+                  help='Enter the missing axis limits above to continue.')
         return
     if extraction_error:
         st.warning(extraction_error)
         return
     if source == 'Upload':
-        st.caption(f'Time: {display_time(time_axis,xmin)} to {display_time(time_axis,xmax)} · Values: {axes[2]:g} to {axes[3]:g} · {count} observations. '
-                   'Adjust the fields above to match your chart.')
-        calibration = (image_id, bounds, axes, kind, frequency, count, color, distance)
+        calibration = (image_id, bounds, axes, kind, frequency, count, sampled, color, distance)
         if st.button('Extract series', type='primary', key='extract_series'):
             st.session_state.approved_calibration = calibration
         if st.session_state.approved_calibration != calibration:
@@ -283,9 +304,11 @@ def main():
     st.download_button('Download recovered data', export_series(df,time_axis).to_csv(index=False), 'extracted.csv', 'text/csv')
 
     st.subheader('3. Forecast and evaluate')
+    if sampled:
+        st.info('Backtest on sampled data: results evaluate the sampled curve. Interpolation can make errors appear smaller.')
     cols = st.columns(3)
     horizon = cols[0].number_input('Forecast horizon', 1, min(20,count//3), min(5,count//3),
-                                  help='Number of future observations. Exact future dates and trading sessions cannot be recovered from the image.')
+                                  help='Number of future steps in the extracted series. For sampled data, each step is one sample. Exact future dates and trading sessions cannot be recovered from the image.')
     if st.session_state.get('forecast_model') not in MODELS:
         st.session_state.forecast_model = 'ETS'
     model = cols[2].selectbox('Forecast model', MODELS, key='forecast_model',
@@ -294,7 +317,7 @@ def main():
     if count-horizon < minimum:
         st.info('ARIMA needs at least 12 training observations plus the forecast horizon. Choose ETS or Naive, or reduce the horizon.')
         return
-    initial = cols[1].number_input('Initial training observations', minimum, count-horizon, max(minimum,count//2))
+    initial = cols[1].number_input('Initial training points', minimum, count-horizon, max(minimum,count//2))
     tolerance = st.number_input('Failure tolerance (value units)', min_value=0., value=5., help='A prediction fails when its absolute error is greater than this value.')
     y = df.value.to_numpy()
     try:
@@ -324,6 +347,8 @@ def main():
     fig.add_trace(go.Scatter(x=np.r_[df.time.iloc[-1],times], y=np.r_[y[-1],future], name=model+' forecast', line=dict(dash='dash'), mode='lines+markers'))
     fig.add_vline(x=float(df.time.iloc[-1]), line_dash='dot', line_color='gray')
     fig.update_layout(xaxis_title='Time', yaxis_title='Value', height=380, margin=dict(t=20))
+    if sampled:
+        fig.update_layout(title=f'Forecast from {count} sampled points',margin=dict(t=55))
     if kind != 'numeric':
         fig.data[0].update(customdata=display_labels,
                             hovertemplate='%{customdata}<br>Value: %{y:.3f}<extra></extra>')
@@ -331,19 +356,20 @@ def main():
                             hovertemplate='%{customdata}<br>Forecast: %{y:.3f}<extra></extra>')
     apply_time_axis(fig,time_axis,np.r_[df.time.to_numpy(),times],history_count=count)
     if kind != 'numeric':
-        st.caption('Forecasts count future observations. Exact dates and trading sessions are not inferred from the image.')
+        st.caption('Forecasts count future steps. Exact dates and trading sessions are not inferred from the image.')
     st.plotly_chart(fig, width='stretch')
     comparison = pd.DataFrame([{'Model':model, **selected}, {'Model':'Naive baseline', **naive}]) if model != 'Naive' else pd.DataFrame([{'Model':'Naive', **selected}])
     st.dataframe(comparison.set_index('Model').style.format({'MAE':'{:.3f}', 'RMSE':'{:.3f}', 'Historical failure rate':'{:.1%}'}), width='stretch')
     with st.expander('Understand the forecast errors'):
         st.markdown('**Historical forecast error distribution**')
         within = int((terminal.abs() <= tolerance).sum())
+        step_unit = 'samples' if sampled else 'observations'
         st.write(f'{within} of {len(terminal)} past forecasts were within your ±{tolerance:g} tolerance '
-                 f'when predicting {horizon} observations ahead.')
+                 f'when predicting {horizon} {step_unit} ahead.')
         st.plotly_chart(error_distribution(terminal, tolerance), width='stretch',
                         config={'displayModeBar': False})
         st.markdown('**Forecast accuracy by lead time**')
-        detail = metric_table(results,tolerance).rename_axis('Observations ahead').rename(columns={'Count':'Past forecasts'})
+        detail = metric_table(results,tolerance).rename_axis('Samples ahead' if sampled else 'Observations ahead').rename(columns={'Count':'Past forecasts'})
         st.dataframe(detail.style.format({'MAE':'{:.3f}', 'RMSE':'{:.3f}', 'Historical failure rate':'{:.1%}'}), width='stretch')
     cols = st.columns(3)
     cols[0].download_button('Download forecast',
@@ -354,6 +380,9 @@ def main():
     backtest_export = results.copy()
     backtest_export['forecast_origin_time'] = [display_labels[int(o)-1] for o in results.origin]
     backtest_export['target_time'] = [display_labels[int(o+h)-1] for o,h in zip(results.origin,results.horizon)]
+    if sampled:
+        backtest_export['sampling_basis'] = 'sampled_curve'
+        backtest_export['extraction_points'] = count
     cols[2].download_button('Download backtest', backtest_export.to_csv(index=False), 'backtest.csv', 'text/csv')
     st.info('Models are evaluated on the same historical periods, using only data available before each forecast. '
             'Historical failure rates describe past performance and cannot provide an exact probability of future error. '

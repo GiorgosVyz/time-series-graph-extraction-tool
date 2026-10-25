@@ -136,13 +136,13 @@ def test_temporal_upload_overview_and_forecast():
         assert app.warning
 
 
-def test_open_area_chart_upload_needs_sampling_confirmation():
+def test_open_area_chart_upload_defaults_to_labelled_sampling():
     from io import BytesIO
     from unittest.mock import patch
     from datetime import datetime
     import streamlit as st
     st.cache_data.clear()
-    image=(Path(APP).parent/'tests'/'fixtures'/'market'/'area_left_axis.png').read_bytes()
+    image=(Path(APP).parent/'tests'/'fixtures'/'market'/'area_left_axis_full.png').read_bytes()
     start=float(datetime(2026,4,27).toordinal())+.75
     end=float(datetime(2026,10,23).toordinal())+.5
     recognized={'axes':[start,end,40.,140.],'count':None,'notes':[],
@@ -156,9 +156,17 @@ def test_open_area_chart_upload_needs_sampling_confirmation():
         assert app.selectbox(key='time_kind').value=='Dates'
         assert app.text_input(key='time_start').value=='2026-04-27'
         assert app.selectbox(key='observation_frequency').value=='Unknown'
-        assert app.number_input(key='observations').value is None
+        assert app.number_input(key='observations').label=='Extraction points'
+        assert app.number_input(key='observations').value==100
+        assert any('Original count unknown. Using 100 evenly spaced samples.' in item.value for item in app.caption)
         assert len(app.metric)==0
+        app.button(key='extract_series').click().run()
+        assert not app.exception
+        assert len(app.metric)==3
+        assert any('Backtest on sampled data' in item.value for item in app.info)
+        assert any('**100 sampled points' in item.value for item in app.markdown)
         app.number_input(key='observations').set_value(40).run()
+        assert len(app.metric)==0
         app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric)==3
@@ -169,17 +177,38 @@ def test_open_area_chart_upload_needs_sampling_confirmation():
         app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric)==3
-        overview=next(item.value for item in app.markdown if '**40 observations' in item.value)
+        overview=next(item.value for item in app.markdown if '**40 sampled points' in item.value)
         assert 'daily chart' in overview
         assert '27 Apr 2026 – 23 Oct 2026' in overview
         assert '18:00' not in overview
         import json
         charts=[json.loads(chart.proto.spec) for chart in app.get('plotly_chart')]
         forecast=charts[1]
-        assert forecast['data'][1]['customdata'][1]=='Daily observation +1'
-        assert 'Daily observation +5' in forecast['layout']['xaxis']['ticktext']
+        assert forecast['data'][1]['customdata'][1]=='Sample +1'
+        assert 'Sample +5' in forecast['layout']['xaxis']['ticktext']
+        assert forecast['layout']['title']['text']=='Forecast from 40 sampled points'
         assert all(':' not in label for label in forecast['data'][0]['customdata'])
         # A different image must not inherit the user's daily sampling confirmation.
         app.radio(key='input_mode').set_value('Demo').run()
         assert not app.exception
         assert app.session_state.observation_frequency=='Unknown'
+        assert app.number_input(key='observations').value==60
+        assert not any('Backtest on sampled data' in item.value for item in app.info)
+
+
+def test_failed_ocr_still_provides_default_sampling_count():
+    from io import BytesIO
+    from unittest.mock import patch
+    import streamlit as st
+    st.cache_data.clear()
+    image=(Path(APP).parent/'tests'/'fixtures'/'market'/'area_left_axis_full.png').read_bytes()
+    app=AppTest.from_file(APP,default_timeout=30).run()
+    with patch('streamlit.file_uploader',side_effect=lambda *a,**kw:BytesIO(image)), patch(
+        'calibration.read_calibration',side_effect=RuntimeError('OCR unavailable')
+    ):
+        app.run()
+        assert not app.exception
+        assert app.number_input(key='observations').value==100
+        assert app.number_input(key='ymin').value is None
+        assert any('Original count unknown' in item.value for item in app.caption)
+        assert app.button[0].disabled

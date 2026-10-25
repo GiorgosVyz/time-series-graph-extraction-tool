@@ -30,6 +30,50 @@ def _color_mask(crop,color,distance):
     return (error < distance) & (hsv[:,:,1] >= max(50,float(saturation)*.75)), error
 
 
+def suggest_observation_count(image, bounds, color):
+    """Count clearly separated, regularly spaced filled markers, never line bends."""
+    left,top,right,bottom = map(int,bounds)
+    if not (0 <= left < right < image.shape[1] and 0 <= top < bottom < image.shape[0]):
+        return None
+    crop = image[top:bottom+1,left:right+1,:3]
+    mask,_ = _color_mask(crop,color,60)
+    if np.mean(np.any(mask,axis=0)) < .85:
+        return None
+    radii = cv2.distanceTransform(mask.astype('uint8'),cv2.DIST_L2,5)
+    stroke_radius = float(np.median(radii.max(axis=0)))
+    # Marker centers must be substantially thicker than the connecting stroke.
+    centers = (radii >= max(2.8,1.8*stroke_radius)).astype('uint8')
+    # At a border only half a marker is visible, so its remaining core is smaller.
+    centers[:,:4] = radii[:,:4] >= 2.8
+    centers[:,-4:] = radii[:,-4:] >= 2.8
+    _,_,stats,centroids = cv2.connectedComponentsWithStats(centers,8)
+    if not 5 <= len(stats)-1 <= 300:
+        return None
+    sizes = []
+    width = crop.shape[1]
+    positions = centroids[1:,0].copy()
+    for i,(x,y,w,h,area) in enumerate(stats[1:]):
+        # A plot border can cover the outermost pixels of an endpoint marker.
+        edge = x <= 3 or x+w >= width-3
+        if h < (2 if edge else 3) or w < (1 if edge else 3) or area < (2 if edge else 5):
+            return None
+        if not edge and not .65 <= w/h <= 1.5:
+            return None
+        if edge:
+            positions[i] = 0 if x <= 3 else width-1
+        else:
+            sizes.append(max(w,h))
+    if not sizes or max(sizes) > 1.5*min(sizes):
+        return None
+    positions.sort()
+    spacing = float(np.median(np.diff(positions)))
+    if spacing < 2.5*max(sizes) or not np.allclose(np.diff(positions),spacing,rtol=.05,atol=1.5):
+        return None
+    if positions[0] > max(3,.2*spacing) or width-1-positions[-1] > max(3,.2*spacing):
+        return None
+    return len(positions)
+
+
 def _leading_extension(crop, first_x, first_y):
     """Only accept another color if it physically meets the main stroke at its edge."""
     hsv = cv2.cvtColor(crop,cv2.COLOR_RGB2HSV)

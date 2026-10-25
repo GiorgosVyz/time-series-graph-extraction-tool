@@ -182,7 +182,7 @@ def display_time(axis, value, friendly=False):
 
 def forecast_labels(axis, count):
     """A raster chart cannot establish future trading dates or sampling times."""
-    unit = 'Daily observation' if axis.get('frequency') == 'Daily' else 'Observation'
+    unit = 'Sample' if axis.get('sampled') else ('Daily observation' if axis.get('frequency') == 'Daily' else 'Observation')
     return [f'{unit} +{step}' for step in range(1,count+1)]
 
 
@@ -220,6 +220,9 @@ def export_series(frame, axis):
     if axis['kind'] != 'numeric':
         result['time'] = (forecast_labels(axis,len(result)) if 'forecast' in frame else
                           [display_time(axis,v) for v in result.time])
+    if axis.get('sampled'):
+        result['sampling_basis'] = 'sampled_curve'
+        result['extraction_points'] = axis['extraction_points']
     return result
 
 
@@ -228,7 +231,8 @@ def series_overview(times, values, axis):
     labels = [display_time(axis,t,friendly=True) for t in times]
     frequency = axis.get('frequency','Unknown')
     title = f' · {frequency.lower()} chart' if frequency != 'Unknown' else ''
-    prefix = f'**{len(values)} observations{title}**  \n{labels[0]} – {labels[-1]}'
+    count_unit = 'sampled points' if axis.get('sampled') else 'observations'
+    prefix = f'**{len(values)} {count_unit}{title}**  \n{labels[0]} – {labels[-1]}'
     approximate = axis.get('estimated_period',False) or (axis['kind'] in ('date','month','weekday')
                   and not (frequency == 'Intraday' and axis.get('has_time_labels'))
                   and np.any(~np.isclose(times,np.round(times),rtol=0,atol=1e-7)))

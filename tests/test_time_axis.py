@@ -131,3 +131,25 @@ def test_summary_only_mentions_first_occurrence_for_ties():
     assert '**Estimated low:** 1, at 0' in text
     assert 'first occurrence' in text
     assert 'Starts and ends at approximately the same value' in text
+
+
+@pytest.mark.parametrize('kind',['numeric','date','weekday'])
+def test_sampled_series_keeps_its_basis_in_overview_forecasts_and_exports(kind):
+    start=datetime(2026,10,1).toordinal() if kind=='date' else 0
+    times=np.linspace(start,start+20,100)
+    values=np.linspace(2,5,100)
+    axis={'kind':kind,'start':start,'end':start+20,'frequency':'Daily','sampled':True,'extraction_points':100}
+    text=series_overview(times,values,axis)
+    assert '**100 sampled points' in text
+    assert '100 observations' not in text
+    assert forecast_labels(axis,2)==['Sample +1','Sample +2']
+    recovered=export_series(pd.DataFrame({'time':times,'value':values}),axis)
+    assert set(recovered.sampling_basis)=={'sampled_curve'}
+    assert set(recovered.extraction_points)=={100}
+    np.testing.assert_array_equal(recovered.value,values)
+    future=export_series(pd.DataFrame({'time':[start+21,start+22],'forecast':[5,6]}),axis)
+    assert set(future.sampling_basis)=={'sampled_curve'}
+    assert set(future.extraction_points)=={100}
+    assert list(future.forecast)==[5,6]
+    if kind!='numeric':
+        assert list(future.time)==['Sample +1','Sample +2']
