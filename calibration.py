@@ -23,7 +23,18 @@ def _engine():
 
 
 def numeric_label(text):
-    text = text.strip().replace('−', '-').replace('–', '-').replace(',', '.')
+    text = text.strip().replace('−', '-').replace('–', '-')
+    if ',' in text and '.' in text:
+        if re.fullmatch(r'[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?',text):
+            text = text.replace(',','')
+        elif re.fullmatch(r'[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?',text):
+            text = text.replace('.','').replace(',','.')
+        else:
+            return None
+    elif re.fullmatch(r'[+-]?\d{1,3}(?:,\d{3})+',text):
+        text = text.replace(',','')
+    else:
+        text = text.replace(',','.')
     if not re.fullmatch(r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', text):
         return None
     number = float(text)
@@ -64,7 +75,8 @@ def fit_axis(ticks, start, end, increasing=True):
     step = float(np.median(np.diff(np.sort(v))))
     for i, endpoint in enumerate((start, end)):
         nearest = np.argmin(abs(p-endpoint))
-        if abs(p[nearest]-endpoint) <= .025*(end-start):
+        snap_distance = min(.025*(end-start),max(2.,.08*float(np.median(np.diff(p)))))
+        if abs(p[nearest]-endpoint) <= snap_distance:
             values[i] = v[nearest]
         elif step > 0:
             snapped = v[0]+round((values[i]-v[0])/step)*step
@@ -76,7 +88,7 @@ def fit_axis(ticks, start, end, increasing=True):
 def axes_from_labels(labels, bounds):
     left, top, right, bottom = bounds
     width, height = right-left, bottom-top
-    xticks, yticks = [], []
+    xticks, yticks, right_ticks = [], [], []
     for text, score, box in labels:
         value = numeric_label(text)
         if value is None or score < .7:
@@ -87,6 +99,8 @@ def axes_from_labels(labels, bounds):
             xticks.append((x, value))
         if left-max(85,.18*width) < x < left-3 and top-.03*height <= y <= bottom+.03*height:
             yticks.append((y, value))
+        if right+3 < x < right+max(130,.25*width) and top-.03*height <= y <= bottom+.03*height:
+            right_ticks.append((y,value))
     result = {'axes': [None]*4, 'count': None, 'notes': []}
     try:
         result['axes'][:2], xvalues = fit_axis(xticks, left, right)
@@ -100,11 +114,21 @@ def axes_from_labels(labels, bounds):
             result['count'] = count
     except ValueError as exc:
         result['notes'].append('Time axis: '+str(exc))
-    try:
-        ends, _ = fit_axis(yticks, top, bottom, increasing=False)
+    scales = []
+    for side,ticks in [('left',yticks),('right',right_ticks)]:
+        try:
+            ends, accepted = fit_axis(ticks, top, bottom, increasing=False)
+            scales.append((side,ends,len(accepted)))
+        except ValueError:
+            pass
+    if len(scales)==2 and not np.allclose(scales[0][1],scales[1][1],rtol=.01,atol=.01):
+        result['notes'].append('Value axis: two different scales detected; enter the intended scale manually.')
+    elif scales:
+        side,ends,_ = max(scales,key=lambda item:item[2])
         result['axes'][2:] = ends[::-1]
-    except ValueError as exc:
-        result['notes'].append('Value axis: '+str(exc))
+        result['value_axis_side'] = side
+    else:
+        result['notes'].append('Value axis: not enough consistent tick labels were read on either side.')
     temporal = detect_time_axis(labels, bounds, fit_axis)
     if temporal:
         result['notes'] = [note for note in result['notes'] if not note.startswith('Time axis:')]

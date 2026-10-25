@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 from extraction import extract, detect_plot_area, suggest_curve_color
 from forecasting import predict, backtest, summarize, MODELS, ARIMA_MIN_TRAIN
 from calibration import read_calibration
-from time_axis import (KINDS, KEYS, REVERSE_KEYS, format_time, parse_bounds,
+from time_axis import (KINDS, KEYS, REVERSE_KEYS, FREQUENCIES, display_time, forecast_labels, parse_bounds,
                        apply_time_axis, export_series, series_overview)
 
 ROOT = Path(__file__).parent
@@ -35,14 +35,17 @@ def fill_axis_fields(image, bounds):
         st.session_state.detected_time_axis = axis
         st.session_state.time_kind = KEYS[axis['kind']]
         st.session_state.axis_editor_kind = KEYS[axis['kind']]
+        st.session_state.observation_frequency = 'Intraday' if axis.get('has_time_labels') or axis['kind']=='clock' else 'Unknown'
         if axis['kind'] != 'numeric':
-            st.session_state.time_start = format_time(axis['kind'],axis['start'],axis['start'])
-            st.session_state.time_end = format_time(axis['kind'],axis['end'],axis['start'])
+            display_axis = dict(axis,frequency=st.session_state.observation_frequency)
+            st.session_state.time_start = display_time(display_axis,axis['start'])
+            st.session_state.time_end = display_time(display_axis,axis['end'])
         if any(value is None for value in result['axes']):
             return 'Some axis labels could not be read reliably. Fill in the missing values below.'
+        period_note = ' The period is estimated from month/year ticks.' if axis.get('estimated_period') else ''
         if result['count'] is None:
-            return 'Axis values detected. Enter the original observation count below.'
-        return 'Axis values detected. Observation count suggested from visible tick labels; check it matches your chart.'
+            return 'Axis values detected. Enter the original observation count below.' + period_note
+        return 'Axis values detected. Observation count suggested from visible tick labels; check it matches your chart.' + period_note
     except Exception:
         logging.getLogger(__name__).warning('Automatic axis reading failed', exc_info=True)
         return 'Automatic axis reading is unavailable. You can enter the values below.'
@@ -129,8 +132,8 @@ def main():
     if min(height, width) < 20:
         st.error('The image is too small to digitize. Use a larger chart.')
         return
-    image_id = hashlib.sha256(im.tobytes() + str(im.shape).encode() + source.encode() + b'time-axis-v1').hexdigest()
-    calibration_keys = BOUND_KEYS + ['ymin', 'ymax', 'observations', 'curve_color', 'time_kind']
+    image_id = hashlib.sha256(im.tobytes() + str(im.shape).encode() + source.encode() + b'open-chart-v2').hexdigest()
+    calibration_keys = BOUND_KEYS + ['ymin', 'ymax', 'observations', 'curve_color', 'time_kind', 'observation_frequency']
     if (st.session_state.get('calibration_image') != image_id
             or any(key not in st.session_state for key in calibration_keys)):
         st.session_state.calibration_image = image_id
@@ -153,6 +156,7 @@ def main():
         st.session_state.curve_color = color
         st.session_state.observations = None if source == 'Upload' else 60
         st.session_state.time_kind = 'Numeric'
+        st.session_state.observation_frequency = 'Unknown'
         st.session_state.axis_editor_kind = 'Numeric'
         st.session_state.detected_time_axis = {'kind':'numeric','start':axis_defaults[0],'end':axis_defaults[1]}
         if source == 'Upload':
@@ -174,6 +178,7 @@ def main():
         st.session_state.axis_editor_kind = time_kind
         st.session_state.time_start = ''
         st.session_state.time_end = ''
+        st.session_state.observation_frequency = 'Unknown'
         if kind == 'numeric':
             st.session_state.xmin = None
             st.session_state.xmax = None
@@ -195,7 +200,12 @@ def main():
     ymin = cols[2].number_input('Value minimum', value=None, key='ymin', placeholder='From your chart')
     ymax = cols[3].number_input('Value maximum', value=None, key='ymax', placeholder='From your chart')
     axes = (xmin,xmax,ymin,ymax)
-    time_axis = {'kind':kind,'start':xmin,'end':xmax}
+    time_axis = dict(st.session_state.detected_time_axis) if st.session_state.detected_time_axis.get('kind') == kind else {}
+    frequency = st.selectbox('Observation frequency', FREQUENCIES, key='observation_frequency',
+                            help='Choose Daily if each original point represents one day, or Intraday for points within a day. Month labels alone do not establish this; leave Unknown if unsure.') if kind != 'numeric' else 'Unknown'
+    time_axis.update(kind=kind,start=xmin,end=xmax,frequency=frequency)
+    if kind == 'date':
+        time_axis['has_time_labels'] = bool(time_axis.get('has_time_labels') or ':' in start_text or ':' in end_text)
     cols = st.columns([2, 1])
     count = cols[0].number_input('Number of original observations', 5, 300, value=None, key='observations', placeholder='From your chart',
                                 help='Suggested from dense, regularly spaced labels. Check the original sample count; tick labels do not always mark every observation.')
@@ -203,6 +213,7 @@ def main():
     with st.expander('Advanced extraction settings'):
         distance = st.slider('Color tolerance', 10, 200, 90)
     rgb = tuple(int(color[i:i+2], 16) for i in (1,3,5))
+    point_color = '#2563eb' if np.linalg.norm(np.array(rgb)-[229,57,53]) < 120 else '#e53935'
     preview = Image.fromarray(im)
     draw = ImageDraw.Draw(preview)
     if bounds[0] < bounds[2] and bounds[1] < bounds[3]:
@@ -212,17 +223,25 @@ def main():
         df = None if missing_values else extract(im, bounds, axes, count, rgb, distance)
         if df is not None:
             for x, y in zip(df.pixel_x, df.pixel_y):
-                draw.ellipse((x-2,y-2,x+2,y+2), fill='#e53935')
+                draw.ellipse((x-2,y-2,x+2,y+2), fill=point_color)
         extraction_error = None
     except ValueError as exc:
         df, extraction_error = None, str(exc)
+    if df is None:
+        try:
+            # A trace preview remains useful while sampling or unreadable axes await confirmation.
+            trace = extract(im,bounds,(0.,1.,0.,1.),min(150,width),rgb,distance)
+            for x,y in zip(trace.pixel_x,trace.pixel_y):
+                draw.ellipse((x-1,y-1,x+1,y+1),fill=point_color)
+        except ValueError:
+            pass
     st.image(preview, width=750)
     st.markdown(
         '<div style="display:flex;gap:24px;flex-wrap:wrap;font-size:0.875rem;margin:4px 0 16px;">'
         '<span><span style="display:inline-block;width:14px;height:10px;border:2px solid #00a050;'
         'margin-right:7px;" aria-hidden="true"></span>Plot boundary</span>'
         '<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
-        'background:#e53935;margin-right:7px;" aria-hidden="true"></span>Recovered observations</span>'
+        f'background:{point_color};margin-right:7px;" aria-hidden="true"></span>Recovered observations</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -236,9 +255,9 @@ def main():
         st.warning(extraction_error)
         return
     if source == 'Upload':
-        st.caption(f'Time: {format_time(kind,xmin,xmin)} to {format_time(kind,xmax,xmin)} · Values: {axes[2]:g} to {axes[3]:g} · {count} observations. '
+        st.caption(f'Time: {display_time(time_axis,xmin)} to {display_time(time_axis,xmax)} · Values: {axes[2]:g} to {axes[3]:g} · {count} observations. '
                    'Adjust the fields above to match your chart.')
-        calibration = (image_id, bounds, axes, kind, count, color, distance)
+        calibration = (image_id, bounds, axes, kind, frequency, count, color, distance)
         if st.button('Extract series', type='primary', key='extract_series'):
             st.session_state.approved_calibration = calibration
         if st.session_state.approved_calibration != calibration:
@@ -249,7 +268,7 @@ def main():
     history.update_layout(xaxis_title='Time', yaxis_title='Value',
                           xaxis_range=[axes[0], axes[1]], yaxis_range=[axes[2], axes[3]],
                           height=380, margin=dict(t=20))
-    display_labels = [format_time(kind,t,xmin) for t in df.time]
+    display_labels = [display_time(time_axis,t) for t in df.time]
     if kind != 'numeric':
         history.data[0].update(customdata=display_labels,
                                hovertemplate='%{customdata}<br>Value: %{y:.3f}<extra></extra>')
@@ -265,7 +284,8 @@ def main():
 
     st.subheader('3. Forecast and evaluate')
     cols = st.columns(3)
-    horizon = cols[0].number_input('Forecast horizon', 1, min(20,count//3), min(5,count//3))
+    horizon = cols[0].number_input('Forecast horizon', 1, min(20,count//3), min(5,count//3),
+                                  help='Number of future observations. Exact future dates and trading sessions cannot be recovered from the image.')
     if st.session_state.get('forecast_model') not in MODELS:
         st.session_state.forecast_model = 'ETS'
     model = cols[2].selectbox('Forecast model', MODELS, key='forecast_model',
@@ -299,6 +319,7 @@ def main():
         st.info(f'The naive baseline matches or beats {model} at this lead time. A more complex model does not always forecast better.')
     times = df.time.iloc[-1] + np.arange(1,horizon+1)*(axes[1]-axes[0])/(count-1)
     forecast = pd.DataFrame({'time':times, 'forecast':future})
+    future_labels = forecast_labels(time_axis,horizon)
     fig = go.Figure(go.Scatter(x=df.time,y=y,name='History'))
     fig.add_trace(go.Scatter(x=np.r_[df.time.iloc[-1],times], y=np.r_[y[-1],future], name=model+' forecast', line=dict(dash='dash'), mode='lines+markers'))
     fig.add_vline(x=float(df.time.iloc[-1]), line_dash='dot', line_color='gray')
@@ -306,9 +327,11 @@ def main():
     if kind != 'numeric':
         fig.data[0].update(customdata=display_labels,
                             hovertemplate='%{customdata}<br>Value: %{y:.3f}<extra></extra>')
-        fig.data[1].update(customdata=[format_time(kind,t,xmin) for t in np.r_[df.time.iloc[-1],times]],
+        fig.data[1].update(customdata=[display_labels[-1]]+future_labels,
                             hovertemplate='%{customdata}<br>Forecast: %{y:.3f}<extra></extra>')
-    apply_time_axis(fig,time_axis,np.r_[df.time.to_numpy(),times])
+    apply_time_axis(fig,time_axis,np.r_[df.time.to_numpy(),times],history_count=count)
+    if kind != 'numeric':
+        st.caption('Forecasts count future observations. Exact dates and trading sessions are not inferred from the image.')
     st.plotly_chart(fig, width='stretch')
     comparison = pd.DataFrame([{'Model':model, **selected}, {'Model':'Naive baseline', **naive}]) if model != 'Naive' else pd.DataFrame([{'Model':'Naive', **selected}])
     st.dataframe(comparison.set_index('Model').style.format({'MAE':'{:.3f}', 'RMSE':'{:.3f}', 'Historical failure rate':'{:.1%}'}), width='stretch')

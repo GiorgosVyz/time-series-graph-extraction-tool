@@ -12,7 +12,10 @@ def test_numeric_formats():
     assert numeric_label('7,5') == 7.5
     assert numeric_label('−2.5') == -2.5
     assert numeric_label('1e3') == 1000
-    for text in ['Time', '1 2 3', 'nan', '1,234.5']:
+    assert numeric_label('1,234.5') == 1234.5
+    assert numeric_label('7,800.00') == 7800
+    assert numeric_label('7.800,00') == 7800
+    for text in ['Time', '1 2 3', 'nan', '12,34.5']:
         assert numeric_label(text) is None
 
 

@@ -127,9 +127,59 @@ def test_temporal_upload_overview_and_forecast():
         app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric)==3
-        assert any('Hourly series with 10 observations' in text.value for text in app.markdown)
+        assert app.selectbox(key='observation_frequency').value == 'Intraday'
+        assert any('10 observations · intraday chart' in text.value for text in app.markdown)
         assert any('05:00 (+1 day)' in text.value for text in app.markdown)
         app.text_input(key='time_end').set_value('not a time').run()
         assert not app.exception
         assert len(app.metric)==0
         assert app.warning
+
+
+def test_open_area_chart_upload_needs_sampling_confirmation():
+    from io import BytesIO
+    from unittest.mock import patch
+    from datetime import datetime
+    import streamlit as st
+    st.cache_data.clear()
+    image=(Path(APP).parent/'tests'/'fixtures'/'market'/'area_left_axis.png').read_bytes()
+    start=float(datetime(2026,4,27).toordinal())+.75
+    end=float(datetime(2026,10,23).toordinal())+.5
+    recognized={'axes':[start,end,40.,140.],'count':None,'notes':[],
+                'time_axis':{'kind':'date','start':start,'end':end,'count':None,'estimated_period':True}}
+    app=AppTest.from_file(APP,default_timeout=40).run()
+    with patch('streamlit.file_uploader',side_effect=lambda *a,**kw:BytesIO(image)), patch(
+        'calibration.read_calibration',return_value=recognized
+    ):
+        app.run()
+        assert not app.exception
+        assert app.selectbox(key='time_kind').value=='Dates'
+        assert app.text_input(key='time_start').value=='2026-04-27'
+        assert app.selectbox(key='observation_frequency').value=='Unknown'
+        assert app.number_input(key='observations').value is None
+        assert len(app.metric)==0
+        app.number_input(key='observations').set_value(40).run()
+        app.button(key='extract_series').click().run()
+        assert not app.exception
+        assert len(app.metric)==3
+        assert any('approximate dates' in item.value for item in app.markdown)
+        app.selectbox(key='observation_frequency').select('Daily').run()
+        assert not app.exception
+        assert len(app.metric)==0
+        app.button(key='extract_series').click().run()
+        assert not app.exception
+        assert len(app.metric)==3
+        overview=next(item.value for item in app.markdown if '**40 observations' in item.value)
+        assert 'daily chart' in overview
+        assert '27 Apr 2026 – 23 Oct 2026' in overview
+        assert '18:00' not in overview
+        import json
+        charts=[json.loads(chart.proto.spec) for chart in app.get('plotly_chart')]
+        forecast=charts[1]
+        assert forecast['data'][1]['customdata'][1]=='Daily observation +1'
+        assert 'Daily observation +5' in forecast['layout']['xaxis']['ticktext']
+        assert all(':' not in label for label in forecast['data'][0]['customdata'])
+        # A different image must not inherit the user's daily sampling confirmation.
+        app.radio(key='input_mode').set_value('Demo').run()
+        assert not app.exception
+        assert app.session_state.observation_frequency=='Unknown'

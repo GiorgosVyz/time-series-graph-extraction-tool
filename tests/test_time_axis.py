@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 from calibration import axes_from_labels
-from time_axis import parse_label, format_time, parse_bounds, series_overview, export_series
+from time_axis import (parse_label, format_time, parse_bounds, series_overview, export_series,
+                       display_time, forecast_labels, apply_time_axis)
 
 
 def box(x,y):
@@ -61,20 +62,72 @@ def test_invalid_temporal_order_is_not_accepted():
 
 
 def test_summary_and_exports_use_recognized_labels():
-    axis={'kind':'weekday','start':0,'end':6}
+    axis={'kind':'weekday','start':0,'end':6,'frequency':'Daily'}
     values=[2,3,9,4,1,3,5]
     text=series_overview(np.arange(7),values,axis)
-    assert 'Daily series' in text
-    assert 'maximum: 9 at Wed' in text
-    assert 'minimum: 1 at Fri' in text
-    assert '3 units higher' in text
+    assert 'daily chart' in text
+    assert '**Estimated high:** 9, around Wed' in text
+    assert '**Estimated low:** 1, around Fri' in text
+    assert 'Up 3 units' in text
     assert '2026' not in text
     data=export_series(pd.DataFrame({'time':[7,8],'forecast':[5,6]}),axis)
-    assert list(data.time)==['Mon (+1 week)','Tue (+1 week)']
+    assert list(data.time)==['Daily observation +1','Daily observation +2']
     assert list(data.forecast)==[5,6]
 
 
 def test_constant_overview_does_not_claim_trend():
     text=series_overview(np.arange(5),np.repeat(4,5),{'kind':'numeric','start':0,'end':4})
-    assert 'approximately constant at 4' in text
+    assert 'approximately constant at **4**' in text
     assert 'higher' not in text
+
+
+@pytest.mark.parametrize('frequency',['Unknown','Daily','Intraday'])
+def test_month_ticks_never_invent_intraday_precision(frequency):
+    start=datetime(2026,4,27).toordinal()+.75
+    end=datetime(2026,10,24).toordinal()+.06
+    axis={'kind':'date','start':start,'end':end,'estimated_period':True,'frequency':frequency}
+    times=np.linspace(start,end,100)
+    values=np.linspace(111.3,54.6,100)
+    text=series_overview(times,values,axis)
+    assert '27 Apr 2026 – 24 Oct 2026 (approximate dates)' in text
+    assert 'Down 56.7 units' in text
+    assert '17:51' not in text and '18:00' not in text and '01:26' not in text
+    assert '(first occurrences)' not in text
+    recovered=export_series(pd.DataFrame({'time':times,'value':values}),axis)
+    assert all(len(label)==10 for label in recovered.time)
+    assert len(recovered)==100  # Presentation must not aggregate or remove observations.
+    np.testing.assert_array_equal(recovered.value,values)
+
+
+def test_intraday_precision_requires_source_times_and_confirmation():
+    value=datetime(2026,10,24).toordinal()+.5
+    axis={'kind':'date','start':value,'end':value+1,'has_time_labels':True,'frequency':'Intraday'}
+    assert display_time(axis,value)=='2026-10-24 12:00'
+    axis['frequency']='Daily'
+    assert display_time(axis,value)=='2026-10-24'
+    axis['frequency']='Unknown'
+    assert display_time(axis,value)=='2026-10-24'
+
+
+@pytest.mark.parametrize('frequency',['Unknown','Daily','Intraday'])
+def test_temporal_forecast_chart_and_csv_use_observation_steps(frequency):
+    import plotly.graph_objects as go
+    start=datetime(2026,10,23).toordinal()
+    axis={'kind':'date','start':start,'end':start+1,'frequency':frequency}
+    figure=go.Figure(go.Scatter(x=np.arange(start,start+5),y=np.arange(5)))
+    apply_time_axis(figure,axis,np.arange(start,start+5),history_count=2)
+    expected=forecast_labels(axis,3)
+    assert list(figure.layout.xaxis.ticktext)[-1]==expected[-1]
+    assert not any('2026-10-25' in label for label in figure.layout.xaxis.ticktext)
+    exported=export_series(pd.DataFrame({'time':[start+2,start+3,start+4],'forecast':[2,3,4]}),axis)
+    assert list(exported.time)==expected
+    assert list(exported.forecast)==[2,3,4]
+
+
+def test_summary_only_mentions_first_occurrence_for_ties():
+    axis={'kind':'numeric','start':0,'end':4}
+    text=series_overview(np.arange(5),[1,4,4,2,1],axis)
+    assert '**Estimated high:** 4, at 1' in text
+    assert '**Estimated low:** 1, at 0' in text
+    assert 'first occurrence' in text
+    assert 'Starts and ends at approximately the same value' in text
