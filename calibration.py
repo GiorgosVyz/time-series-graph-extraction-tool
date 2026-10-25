@@ -5,6 +5,7 @@ from threading import Lock
 import re
 import cv2
 import numpy as np
+from time_axis import detect_time_axis, parse_label
 
 _LOCK = Lock()
 
@@ -92,7 +93,7 @@ def axes_from_labels(labels, bounds):
         xmin, xmax = result['axes'][:2]
         # A suggestion only for densely labelled integer sample indices.
         count = round(xmax-xmin)+1
-        if (8 <= count <= 300 and len(xvalues) >= .8*count
+        if (5 <= count <= 300 and len(xvalues) >= .8*count
                 and np.allclose(xvalues, np.round(xvalues))
                 and np.isclose(xmin, round(xmin)) and np.isclose(xmax, round(xmax))
                 and np.mean(np.isclose(np.diff(np.sort(xvalues)), 1)) >= .8):
@@ -104,6 +105,14 @@ def axes_from_labels(labels, bounds):
         result['axes'][2:] = ends[::-1]
     except ValueError as exc:
         result['notes'].append('Value axis: '+str(exc))
+    temporal = detect_time_axis(labels, bounds, fit_axis)
+    if temporal:
+        result['notes'] = [note for note in result['notes'] if not note.startswith('Time axis:')]
+        result['time_axis'] = temporal
+        result['axes'][:2] = [temporal['start'], temporal['end']]
+        result['count'] = temporal['count']
+    else:
+        result['time_axis'] = {'kind':'numeric', 'start':result['axes'][0], 'end':result['axes'][1]}
     return result
 
 
@@ -120,4 +129,8 @@ def read_calibration(image, bounds):
                 labels.append((text, score, np.asarray(box)/scale))
     if not labels and output.txts is not None:
         labels = [(text, score, box/scale) for text, score, box in zip(output.txts, output.scores, output.boxes)]
+    # Dates containing spaces are one label, even if word-level OCR splits them.
+    if output.txts is not None:
+        labels.extend((text, score, box/scale) for text,score,box in zip(output.txts,output.scores,output.boxes)
+                      if parse_label(text, 'date') is not None)
     return axes_from_labels(labels, bounds)

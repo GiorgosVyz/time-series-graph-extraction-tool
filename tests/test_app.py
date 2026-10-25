@@ -105,3 +105,31 @@ def test_unreadable_axes_remain_editable():
         app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric) == 3
+
+
+def test_temporal_upload_overview_and_forecast():
+    from io import BytesIO
+    from unittest.mock import patch
+    import streamlit as st
+    st.cache_data.clear()
+    image = (Path(APP).parent/'tests'/'fixtures'/'time_axes'/'hours.png').read_bytes()
+    recognized = {'axes':[1200.,1740.,0.,50.], 'count':10, 'notes':[],
+                  'time_axis':{'kind':'clock','start':1200.,'end':1740.,'count':10}}
+    app = AppTest.from_file(APP, default_timeout=40).run()
+    with patch('streamlit.file_uploader',side_effect=lambda *a,**kw: BytesIO(image)), patch(
+        'calibration.read_calibration',return_value=recognized
+    ):
+        app.run()
+        assert not app.exception
+        assert app.selectbox(key='time_kind').value == 'Clock time'
+        assert app.text_input(key='time_start').value == '20:00'
+        assert app.text_input(key='time_end').value == '05:00 (+1 day)'
+        app.button(key='extract_series').click().run()
+        assert not app.exception
+        assert len(app.metric)==3
+        assert any('Hourly series with 10 observations' in text.value for text in app.markdown)
+        assert any('05:00 (+1 day)' in text.value for text in app.markdown)
+        app.text_input(key='time_end').set_value('not a time').run()
+        assert not app.exception
+        assert len(app.metric)==0
+        assert app.warning

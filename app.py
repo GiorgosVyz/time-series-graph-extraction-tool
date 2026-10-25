@@ -10,6 +10,8 @@ from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 from extraction import extract, detect_plot_area, suggest_curve_color
 from forecasting import predict, backtest, summarize, MODELS, ARIMA_MIN_TRAIN
 from calibration import read_calibration
+from time_axis import (KINDS, KEYS, REVERSE_KEYS, format_time, parse_bounds,
+                       apply_time_axis, export_series, series_overview)
 
 ROOT = Path(__file__).parent
 BOUND_KEYS = ['plot_left', 'plot_top', 'plot_right', 'plot_bottom']
@@ -29,11 +31,18 @@ def fill_axis_fields(image, bounds):
         for key, value in zip(AXIS_KEYS, result['axes']):
             st.session_state[key] = value
         st.session_state.observations = result['count']
+        axis = result.get('time_axis', {'kind':'numeric', 'start':result['axes'][0], 'end':result['axes'][1]})
+        st.session_state.detected_time_axis = axis
+        st.session_state.time_kind = KEYS[axis['kind']]
+        st.session_state.axis_editor_kind = KEYS[axis['kind']]
+        if axis['kind'] != 'numeric':
+            st.session_state.time_start = format_time(axis['kind'],axis['start'],axis['start'])
+            st.session_state.time_end = format_time(axis['kind'],axis['end'],axis['start'])
         if any(value is None for value in result['axes']):
             return 'Some axis labels could not be read reliably. Fill in the missing values below.'
         if result['count'] is None:
             return 'Axis values detected. Enter the original observation count below.'
-        return 'Axis values detected. Observation count suggested from unit-spaced x-axis labels; check it matches your chart.'
+        return 'Axis values detected. Observation count suggested from visible tick labels; check it matches your chart.'
     except Exception:
         logging.getLogger(__name__).warning('Automatic axis reading failed', exc_info=True)
         return 'Automatic axis reading is unavailable. You can enter the values below.'
@@ -120,8 +129,8 @@ def main():
     if min(height, width) < 20:
         st.error('The image is too small to digitize. Use a larger chart.')
         return
-    image_id = hashlib.sha256(im.tobytes() + str(im.shape).encode() + source.encode()).hexdigest()
-    calibration_keys = BOUND_KEYS + ['xmin', 'xmax', 'ymin', 'ymax', 'observations', 'curve_color']
+    image_id = hashlib.sha256(im.tobytes() + str(im.shape).encode() + source.encode() + b'time-axis-v1').hexdigest()
+    calibration_keys = BOUND_KEYS + ['ymin', 'ymax', 'observations', 'curve_color', 'time_kind']
     if (st.session_state.get('calibration_image') != image_id
             or any(key not in st.session_state for key in calibration_keys)):
         st.session_state.calibration_image = image_id
@@ -143,6 +152,9 @@ def main():
             st.session_state[key] = value
         st.session_state.curve_color = color
         st.session_state.observations = None if source == 'Upload' else 60
+        st.session_state.time_kind = 'Numeric'
+        st.session_state.axis_editor_kind = 'Numeric'
+        st.session_state.detected_time_axis = {'kind':'numeric','start':axis_defaults[0],'end':axis_defaults[1]}
         if source == 'Upload':
             message += ' ' + fill_axis_fields(im, defaults)
         st.session_state.approved_calibration = None
@@ -155,13 +167,38 @@ def main():
         cols = st.columns(4)
         bounds = tuple(cols[i].number_input(label, 0, int(limit-1), key=key)
                        for i, (label, key, limit) in enumerate(zip(['Left','Top','Right','Bottom'], BOUND_KEYS, [width,height,width,height])))
+    time_kind = st.selectbox('Time axis', KINDS, key='time_kind',
+                             help='Recognized from the labels. Weekdays and months keep their names without assigning a calendar year.')
+    kind = REVERSE_KEYS[time_kind]
+    if st.session_state.axis_editor_kind != time_kind:
+        st.session_state.axis_editor_kind = time_kind
+        st.session_state.time_start = ''
+        st.session_state.time_end = ''
+        if kind == 'numeric':
+            st.session_state.xmin = None
+            st.session_state.xmax = None
     cols = st.columns(4)
-    axes = tuple(cols[i].number_input(label, value=None, key=key, placeholder='From your chart',
-                                    help='Read automatically from numeric tick labels where possible. Correct this value if it does not match your chart.') for i, (label,key) in enumerate(zip(
-        ['Time minimum', 'Time maximum', 'Value minimum', 'Value maximum'], ['xmin','xmax','ymin','ymax'])))
+    time_error = None
+    if kind == 'numeric':
+        xmin = cols[0].number_input('Time minimum', value=None, key='xmin', placeholder='From your chart')
+        xmax = cols[1].number_input('Time maximum', value=None, key='xmax', placeholder='From your chart')
+    else:
+        example = {'clock':'12:20','weekday':'Mon','month':'Jan','date':'2026-10-25'}[kind]
+        start_text = cols[0].text_input('Start time', key='time_start', placeholder=example)
+        end_text = cols[1].text_input('End time', key='time_end', placeholder=example,
+                                     help='For a repeated cycle, append (+1 day), (+1 week), or (+1 year). Dates require an explicit year.')
+        try:
+            xmin,xmax = parse_bounds(kind,start_text,end_text)
+        except ValueError as exc:
+            xmin,xmax = None,None
+            time_error = str(exc)
+    ymin = cols[2].number_input('Value minimum', value=None, key='ymin', placeholder='From your chart')
+    ymax = cols[3].number_input('Value maximum', value=None, key='ymax', placeholder='From your chart')
+    axes = (xmin,xmax,ymin,ymax)
+    time_axis = {'kind':kind,'start':xmin,'end':xmax}
     cols = st.columns([2, 1])
-    count = cols[0].number_input('Number of original observations', 8, 300, value=None, key='observations', placeholder='From your chart',
-                                help='Suggested only for densely labelled unit-spaced sample indices. Check the original sample count; axis labels alone cannot always determine it.')
+    count = cols[0].number_input('Number of original observations', 5, 300, value=None, key='observations', placeholder='From your chart',
+                                help='Suggested from dense, regularly spaced labels. Check the original sample count; tick labels do not always mark every observation.')
     color = cols[1].color_picker('Curve color', key='curve_color')
     with st.expander('Advanced extraction settings'):
         distance = st.slider('Color tolerance', 10, 200, 90)
@@ -190,6 +227,8 @@ def main():
         unsafe_allow_html=True,
     )
     if missing_values:
+        if time_error and (start_text or end_text):
+            st.warning(time_error)
         st.button('Extract series', type='primary', disabled=True,
                   help='Enter the four axis limits and original observation count above to continue.')
         return
@@ -197,9 +236,9 @@ def main():
         st.warning(extraction_error)
         return
     if source == 'Upload':
-        st.caption(f'Time: {axes[0]:g} to {axes[1]:g} · Values: {axes[2]:g} to {axes[3]:g} · {count} observations. '
+        st.caption(f'Time: {format_time(kind,xmin,xmin)} to {format_time(kind,xmax,xmin)} · Values: {axes[2]:g} to {axes[3]:g} · {count} observations. '
                    'Adjust the fields above to match your chart.')
-        calibration = (image_id, bounds, axes, count, color, distance)
+        calibration = (image_id, bounds, axes, kind, count, color, distance)
         if st.button('Extract series', type='primary', key='extract_series'):
             st.session_state.approved_calibration = calibration
         if st.session_state.approved_calibration != calibration:
@@ -210,12 +249,19 @@ def main():
     history.update_layout(xaxis_title='Time', yaxis_title='Value',
                           xaxis_range=[axes[0], axes[1]], yaxis_range=[axes[2], axes[3]],
                           height=380, margin=dict(t=20))
+    display_labels = [format_time(kind,t,xmin) for t in df.time]
+    if kind != 'numeric':
+        history.data[0].update(customdata=display_labels,
+                               hovertemplate='%{customdata}<br>Value: %{y:.3f}<extra></extra>')
+    apply_time_axis(history,time_axis,df.time)
     st.plotly_chart(history, width=850)
+    st.markdown('**Series overview**')
+    st.write(series_overview(df.time,df.value,time_axis))
     if source != 'Upload':
         truth = pd.read_csv(ROOT/'sample_images'/f'{source}.csv')
         if count == len(truth) and np.allclose(axes, [0,59,0,100]):
             st.caption(f'Average extraction error on this demo (MAE): {np.mean(abs(df.value-truth.value)):.3f} value units.')
-    st.download_button('Download recovered data', df[['time','value']].to_csv(index=False), 'extracted.csv', 'text/csv')
+    st.download_button('Download recovered data', export_series(df,time_axis).to_csv(index=False), 'extracted.csv', 'text/csv')
 
     st.subheader('3. Forecast and evaluate')
     cols = st.columns(3)
@@ -257,6 +303,12 @@ def main():
     fig.add_trace(go.Scatter(x=np.r_[df.time.iloc[-1],times], y=np.r_[y[-1],future], name=model+' forecast', line=dict(dash='dash'), mode='lines+markers'))
     fig.add_vline(x=float(df.time.iloc[-1]), line_dash='dot', line_color='gray')
     fig.update_layout(xaxis_title='Time', yaxis_title='Value', height=380, margin=dict(t=20))
+    if kind != 'numeric':
+        fig.data[0].update(customdata=display_labels,
+                            hovertemplate='%{customdata}<br>Value: %{y:.3f}<extra></extra>')
+        fig.data[1].update(customdata=[format_time(kind,t,xmin) for t in np.r_[df.time.iloc[-1],times]],
+                            hovertemplate='%{customdata}<br>Forecast: %{y:.3f}<extra></extra>')
+    apply_time_axis(fig,time_axis,np.r_[df.time.to_numpy(),times])
     st.plotly_chart(fig, width='stretch')
     comparison = pd.DataFrame([{'Model':model, **selected}, {'Model':'Naive baseline', **naive}]) if model != 'Naive' else pd.DataFrame([{'Model':'Naive', **selected}])
     st.dataframe(comparison.set_index('Model').style.format({'MAE':'{:.3f}', 'RMSE':'{:.3f}', 'Historical failure rate':'{:.1%}'}), width='stretch')
@@ -270,16 +322,19 @@ def main():
         st.markdown('**Forecast accuracy by lead time**')
         detail = metric_table(results,tolerance).rename_axis('Observations ahead').rename(columns={'Count':'Past forecasts'})
         st.dataframe(detail.style.format({'MAE':'{:.3f}', 'RMSE':'{:.3f}', 'Historical failure rate':'{:.1%}'}), width='stretch')
-        st.caption('Each model is fitted only on observations available before its forecast origin. '
-                   'Both models use the same validation origins; overlapping forecasts are not independent trials.')
     cols = st.columns(3)
     cols[0].download_button('Download forecast',
                             fig.to_html(full_html=True, include_plotlyjs=True),
                             'forecast_chart.html', 'text/html',
                             help='Save the interactive history and forecast chart. Open the HTML file in a browser; it works offline.')
-    cols[1].download_button('Download forecast data (CSV)', forecast.to_csv(index=False), 'forecast.csv', 'text/csv')
-    cols[2].download_button('Download backtest', results.to_csv(index=False), 'backtest.csv', 'text/csv')
-    st.info('Historical failure rates estimate past performance; they are not exact future probabilities. Overlapping validation folds are dependent. Changing conditions and extraction errors can reduce reliability. No prediction interval is claimed.')
+    cols[1].download_button('Download forecast data (CSV)', export_series(forecast,time_axis).to_csv(index=False), 'forecast.csv', 'text/csv')
+    backtest_export = results.copy()
+    backtest_export['forecast_origin_time'] = [display_labels[int(o)-1] for o in results.origin]
+    backtest_export['target_time'] = [display_labels[int(o+h)-1] for o,h in zip(results.origin,results.horizon)]
+    cols[2].download_button('Download backtest', backtest_export.to_csv(index=False), 'backtest.csv', 'text/csv')
+    st.info('Models are evaluated on the same historical periods, using only data available before each forecast. '
+            'Historical failure rates describe past performance and cannot provide an exact probability of future error. '
+            'Overlapping tests are dependent, and changing conditions or extraction errors can affect reliability.')
 
 
 if __name__ == '__main__':
