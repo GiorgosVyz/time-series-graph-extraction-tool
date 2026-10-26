@@ -1,8 +1,20 @@
-# Demonstration outline (2–3 minutes)
+# Demonstration video
 
-0:00 Explain the problem and select the trend sample.
-0:20 Show the automatically suggested plot rectangle and curve color. Show that the series and forecast appear automatically. Check the axis values and extraction points; edits update the results without an extra button. Date-only uploads with an unknown count automatically use one calendar-day sample between the displayed bounds; other unknown counts start at 100 samples; explain that their backtest evaluates the sampled curve. Inspect red extracted points and the extraction MAE against known sample data. Download CSV.
-0:55 Select ETS, a five-step horizon and a training window. Show ARIMA as an alternative with restricted order selection. Select Auto and show the chosen model: earlier data selects by failure rate then MAE, while later data evaluates that fixed choice. Show reconstructed history and future forecast.
-1:20 Explain expanding-window rolling validation: each fit sees only the historical prefix. Compare against the naive baseline at the same lead time, and open validation details to inspect the error histogram and per-lead metrics.
-1:50 Change the percentage failure tolerance (default ±10% of each actual value). MAE and RMSE remain in value units. Explain that the historical proportion above tolerance estimates reliability; it is not an exact future probability. Mention overlapping folds, distribution shifts and digitization error.
-2:20 Switch to the shift sample and discuss model limitations. Show the tests and README. Finish with CSV export.
+The video is provided separately as an attachment to the submission email.
+
+**File:** ODYCEO_Demo_Final_v2.mp4
+
+**Duration:** 2:12 · **Resolution:** 1920 × 1080 · **Language:** English on-screen captions
+
+The walkthrough uses the uploaded [CRWV chart](tests/fixtures/market/area_left_axis_full.png).
+
+| Time | What is shown |
+| --- | --- |
+| 0:00–0:36 | Upload the image, review the detected axes and sampling settings, and inspect the plot boundary and extracted points. |
+| 0:36–0:55 | Review the recovered series and its overview. |
+| 0:55–1:37 | Show the forecasting controls, ETS forecast and historical accuracy metrics against the Naive baseline. |
+| 1:37–1:56 | Inspect the forecast error distribution: percentage errors, tolerance boundaries, overestimates and underestimates. |
+| 1:56–2:02 | Compare MAE, RMSE and historical failure rate at each lead time. |
+| 2:02–2:12 | Download the interactive HTML forecast and open it offline. |
+
+The example uses 181 interpolated calendar-day samples, a five-step horizon and ±10% tolerance. Its backtest evaluates the sampled curve. Historical failure rate is not an exact probability of future error.

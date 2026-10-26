@@ -98,4 +98,6 @@ Run the tests:
 
 The three demos include original CSV values in `sample_images/` for extraction accuracy checks. Regenerate them with `python generate_samples.py`. Tests also cover model fitting, future-data leakage, error metrics, invalid inputs and uploaded chart examples. Streamlit tests need local loopback connections.
 
-A short video outline is available in [DEMO.md](DEMO.md).
+## Demo video
+
+The demonstration video is provided separately as an attachment to the submission email: **ODYCEO_Demo_Final_v2.mp4** (2:12, Full HD). See [DEMO.md](DEMO.md) for the walkthrough.
