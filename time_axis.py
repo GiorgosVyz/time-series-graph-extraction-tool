@@ -336,11 +336,11 @@ def series_overview(times, values, axis):
     if np.ptp(values) < 1e-9*max(1,float(np.max(abs(values)))):
         return prefix+f'\n\nValues stay approximately constant at **{values[0]:.3g}**.'
     when = 'around' if approximate or axis['kind'] in ('month','weekday') else 'at'
-    extrema = (f'\n\n- **Estimated high:** {values[peak]:.3g}, {when} {labels[peak]}'
-               f'\n- **Estimated low:** {values[low]:.3g}, {when} {labels[low]}')
-    note = ('\n\nRepeated highs or lows show their first occurrence.'
-            if np.count_nonzero(values == values[peak]) > 1 or np.count_nonzero(values == values[low]) > 1 else '')
+    high_when = f'first reached {when}' if np.count_nonzero(values == values[peak]) > 1 else when
+    low_when = f'first reached {when}' if np.count_nonzero(values == values[low]) > 1 else when
+    extrema = (f'\n\n- **Estimated high:** {values[peak]:.3g}, {high_when} {labels[peak]}'
+               f'\n- **Estimated low:** {values[low]:.3g}, {low_when} {labels[low]}')
     change = values[-1]-values[0]
     ending = ('\n- **Overall change:** Starts and ends at approximately the same value.' if np.isclose(change,0) else
               f'\n- **Overall change:** {"Up" if change>0 else "Down"} {abs(change):.3g} units from the first value.')
-    return prefix+extrema+ending+note
+    return prefix+extrema+ending

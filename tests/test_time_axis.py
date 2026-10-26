@@ -157,9 +157,9 @@ def test_temporal_forecast_chart_and_csv_use_observation_steps(frequency):
 def test_summary_only_mentions_first_occurrence_for_ties():
     axis={'kind':'numeric','start':0,'end':4}
     text=series_overview(np.arange(5),[1,4,4,2,1],axis)
-    assert '**Estimated high:** 4, at 1' in text
-    assert '**Estimated low:** 1, at 0' in text
-    assert 'first occurrence' in text
+    assert '**Estimated high:** 4, first reached at 1' in text
+    assert '**Estimated low:** 1, first reached at 0' in text
+    assert 'Repeated highs or lows' not in text
     assert 'Starts and ends at approximately the same value' in text
 
 

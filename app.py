@@ -180,7 +180,7 @@ def error_distribution(errors, tolerance, actuals):
 
 
 def main():
-    st.set_page_config(page_title='Time Series Digitizer & Forecaster', page_icon='📈', layout='wide')
+    st.set_page_config(page_title='Time Series Digitizer & Forecaster', page_icon=ROOT/'assets'/'favicon.svg', layout='wide')
     st.html('<style>' + (ROOT/'ui.css').read_text(encoding='utf-8') + '</style>')
     st.title('Time Series Digitizer & Forecaster')
     mode = st.radio('Chart source', ['Upload', 'Demo'], index=0, horizontal=True, key='input_mode')
