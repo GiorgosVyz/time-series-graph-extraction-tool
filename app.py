@@ -177,7 +177,6 @@ def main():
         st.session_state.detected_time_axis = {'kind':'numeric','start':axis_defaults[0],'end':axis_defaults[1]}
         if source == 'Upload':
             message += ' ' + fill_axis_fields(im, defaults)
-        st.session_state.approved_calibration = None
         st.session_state.detection_message = message
 
     st.subheader('1. Check calibration')
@@ -252,7 +251,7 @@ def main():
         df, extraction_error = None, str(exc)
     if df is None:
         try:
-            # A trace preview remains useful while sampling or unreadable axes await confirmation.
+            # A trace preview remains useful while unreadable axes await correction.
             trace = extract(im,bounds,(0.,1.,0.,1.),min(150,width),rgb,distance)
             for x,y in zip(trace.pixel_x,trace.pixel_y):
                 draw.ellipse((x-1,y-1,x+1,y+1),fill=point_color)
@@ -271,19 +270,11 @@ def main():
     if missing_values:
         if time_error and (start_text or end_text):
             st.warning(time_error)
-        st.button('Extract series', type='primary', disabled=True,
-                  help='Enter the missing axis limits above to continue.')
+        st.caption('Fill in the missing axis limits to show the series and forecast.')
         return
     if extraction_error:
         st.warning(extraction_error)
         return
-    if source == 'Upload':
-        calibration = (image_id, bounds, axes, kind, frequency, count, sampled, color, distance)
-        if st.button('Extract series', type='primary', key='extract_series'):
-            st.session_state.approved_calibration = calibration
-        if st.session_state.approved_calibration != calibration:
-            return
-
     st.subheader('2. Inspect the recovered series')
     history = go.Figure(go.Scatter(x=df.time, y=df.value, name='Recovered series', mode='lines+markers', marker_size=4))
     history.update_layout(xaxis_title='Time', yaxis_title='Value',

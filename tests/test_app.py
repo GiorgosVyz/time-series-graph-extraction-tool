@@ -60,7 +60,7 @@ def test_error_chart_preserves_failure_counts():
         assert [int(np.sum(trace.y)) for trace in chart.data] == expected
 
 
-def test_upload_confirmation_and_changed_settings():
+def test_upload_updates_automatically_with_calibration_changes():
     from io import BytesIO
     from unittest.mock import patch
     image = (Path(APP).parent/'sample_images'/'trend.png').read_bytes()
@@ -71,13 +71,31 @@ def test_upload_confirmation_and_changed_settings():
     ):
         app.run()
         assert not app.exception
-        assert len(app.metric) == 0
+        assert len(app.metric) == 3
+        assert not app.button
         assert len(app.checkbox) == 0
         assert app.number_input(key='xmax').value == 59.
         assert app.number_input(key='observations').value == 60
-        app.button(key='extract_series').click().run()
+        app.number_input(key='observations').set_value(20).run()
         assert not app.exception
         assert len(app.metric) == 3
+        assert any('**20 sampled points' in item.value for item in app.markdown)
+        # Invalid settings hide results; correcting them restores results automatically.
+        app.number_input(key='ymax').set_value(0.).run()
+        assert not app.exception
+        assert not app.metric
+        assert not app.get('plotly_chart')
+        assert app.warning
+        app.number_input(key='ymax').set_value(100.).run()
+        assert not app.exception
+        assert len(app.metric)==3
+        app.number_input(key='xmax').set_value(None).run()
+        assert not app.exception
+        assert not app.metric
+        assert not app.button
+        app.number_input(key='xmax').set_value(59.).run()
+        assert not app.exception
+        assert len(app.metric)==3
 
 
 def test_unreadable_axes_remain_editable():
@@ -93,18 +111,17 @@ def test_unreadable_axes_remain_editable():
         app.run()
         assert not app.exception
         assert app.number_input(key='xmax').value is None
+        assert not app.metric
+        assert not app.button
         for key, value in zip(['xmin','xmax','ymin','ymax','observations'], [0.,59.,0.,100.,60]):
             app.number_input(key=key).set_value(value)
         app.run()
-        app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric) == 3
         app.number_input(key='observations').set_value(20).run()
         assert not app.exception
-        assert len(app.metric) == 0
-        app.button(key='extract_series').click().run()
-        assert not app.exception
         assert len(app.metric) == 3
+        assert any('**20 sampled points' in item.value for item in app.markdown)
 
 
 def test_temporal_upload_overview_and_forecast():
@@ -124,8 +141,6 @@ def test_temporal_upload_overview_and_forecast():
         assert app.selectbox(key='time_kind').value == 'Clock time'
         assert app.text_input(key='time_start').value == '20:00'
         assert app.text_input(key='time_end').value == '05:00 (+1 day)'
-        app.button(key='extract_series').click().run()
-        assert not app.exception
         assert len(app.metric)==3
         assert app.selectbox(key='observation_frequency').value == 'Intraday'
         assert any('10 observations · intraday chart' in text.value for text in app.markdown)
@@ -134,6 +149,9 @@ def test_temporal_upload_overview_and_forecast():
         assert not app.exception
         assert len(app.metric)==0
         assert app.warning
+        app.text_input(key='time_end').set_value('05:00 (+1 day)').run()
+        assert not app.exception
+        assert len(app.metric)==3
 
 
 def test_open_area_chart_upload_defaults_to_labelled_sampling():
@@ -159,22 +177,14 @@ def test_open_area_chart_upload_defaults_to_labelled_sampling():
         assert app.number_input(key='observations').label=='Extraction points'
         assert app.number_input(key='observations').value==100
         assert any('Original count unknown. Using 100 evenly spaced samples.' in item.value for item in app.caption)
-        assert len(app.metric)==0
-        app.button(key='extract_series').click().run()
-        assert not app.exception
         assert len(app.metric)==3
         assert any('Backtest on sampled data' in item.value for item in app.info)
         assert any('**100 sampled points' in item.value for item in app.markdown)
         app.number_input(key='observations').set_value(40).run()
-        assert len(app.metric)==0
-        app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric)==3
         assert any('approximate dates' in item.value for item in app.markdown)
         app.selectbox(key='observation_frequency').select('Daily').run()
-        assert not app.exception
-        assert len(app.metric)==0
-        app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric)==3
         overview=next(item.value for item in app.markdown if '**40 sampled points' in item.value)
@@ -211,4 +221,5 @@ def test_failed_ocr_still_provides_default_sampling_count():
         assert app.number_input(key='observations').value==100
         assert app.number_input(key='ymin').value is None
         assert any('Original count unknown' in item.value for item in app.caption)
-        assert app.button[0].disabled
+        assert not app.metric
+        assert not app.button

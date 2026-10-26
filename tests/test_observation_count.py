@@ -79,15 +79,12 @@ def test_upload_autofills_markers_and_preserves_user_correction(ocr_available):
             for key,value in zip(['xmin','xmax','ymin','ymax'],recognized['axes']):
                 app.number_input(key=key).set_value(value)
             app.run()
-        app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric)==3
         assert not any('Backtest on sampled data' in item.value for item in app.info)
         assert not any('Adjust the fields above' in item.value for item in app.caption)
         app.number_input(key='observations').set_value(16).run()
         assert app.number_input(key='observations').value==16
-        assert len(app.metric)==0
-        app.button(key='extract_series').click().run()
         assert not app.exception
         assert len(app.metric)==3
         assert any('Backtest on sampled data' in item.value for item in app.info)
