@@ -5,11 +5,41 @@ import pandas as pd
 import pytest
 from calibration import axes_from_labels
 from time_axis import (parse_label, format_time, parse_bounds, series_overview, export_series,
-                       display_time, forecast_labels, apply_time_axis)
+                       display_time, forecast_labels, apply_time_axis, daily_sampling_points)
 
 
 def box(x,y):
     return [[x-8,y-8],[x+8,y-8],[x+8,y+8],[x-8,y+8]]
+
+
+@pytest.mark.parametrize('start,end,expected',[
+    ('2026-04-27','2026-10-24',181),
+    ('2026-04-27','2026-10-23',180),
+    ('2026-05-01','2026-05-31',31),
+    ('2024-02-01','2024-03-01',30),
+    ('2025-02-01','2025-03-01',29),
+    ('2026-12-29','2027-01-03',6),
+])
+def test_daily_sample_count_follows_each_date_range(start,end,expected):
+    first,last=parse_bounds('date',start,end)
+    count=daily_sampling_points('date',first,last)
+    assert count==expected
+    # The extracted grid actually has a one-day interval and includes both bounds.
+    grid=np.linspace(first,last,count)
+    np.testing.assert_allclose(np.diff(grid),1,rtol=0,atol=1e-9)
+    axis={'kind':'date','start':first,'end':last,'sampled':True,'extraction_points':count,'sampling_interval':'calendar_day'}
+    exported=export_series(pd.DataFrame({'time':grid,'value':np.zeros(count)}),axis)
+    assert set(exported.sampling_interval)=={'calendar_day'}
+    assert exported.time.iloc[0]==start and exported.time.iloc[-1]==end
+
+
+@pytest.mark.parametrize('kind,start,end',[
+    ('numeric',0,20),('month',3,9),('date',None,739000),
+    ('date',739000,739000),('date',739001,739000),
+    ('date',739000,739001.5),('date',739000,float('inf')),
+])
+def test_daily_count_requires_a_valid_whole_day_date_span(kind,start,end):
+    assert daily_sampling_points(kind,start,end) is None
 
 
 def labelled_axis(texts):

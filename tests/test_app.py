@@ -12,6 +12,7 @@ def test_demo_interactions():
     assert len(app.metric) == 3
     assert app.number_input(key='plot_left').value == 60
     assert app.selectbox(key='forecast_model').value == 'ETS'
+    assert next(item.value for item in app.number_input if item.label=='Failure tolerance (%)') == 10.
     app.number_input(key='observations').set_value(20).run()
     app.selectbox(key='forecast_model').select('ARIMA').run()
     assert not app.exception
@@ -56,7 +57,7 @@ def test_error_chart_preserves_failure_counts():
         ([-1, 0, 1], 0, [1, 1, 1]),
         ([0, 0, 0], 5, [0, 3, 0]),
     ]:
-        chart = error_distribution(values, tolerance)
+        chart = error_distribution(values,tolerance,np.repeat(100.,len(values)))
         assert [int(np.sum(trace.y)) for trace in chart.data] == expected
 
 
@@ -173,31 +174,55 @@ def test_open_area_chart_upload_defaults_to_labelled_sampling():
         assert not app.exception
         assert app.selectbox(key='time_kind').value=='Dates'
         assert app.text_input(key='time_start').value=='2026-04-27'
-        assert app.selectbox(key='observation_frequency').value=='Unknown'
+        assert app.selectbox(key='observation_frequency').value=='Daily'
         assert app.number_input(key='observations').label=='Extraction points'
-        assert app.number_input(key='observations').value==100
-        assert any('Original count unknown. Using 100 evenly spaced samples.' in item.value for item in app.caption)
+        assert app.number_input(key='observations').value==180
+        assert not any('calendar-day samples' in item.value for item in app.caption)
         assert len(app.metric)==3
         assert any('Backtest on sampled data' in item.value for item in app.info)
-        assert any('**100 sampled points' in item.value for item in app.markdown)
+        assert any('**180 sampled points' in item.value for item in app.markdown)
+        app.text_input(key='time_end').set_value('2026-10-24').run()
+        assert not app.exception
+        assert app.number_input(key='observations').value==181
+        app.text_input(key='time_start').set_value('2026-05-01').run()
+        assert not app.exception
+        assert app.number_input(key='observations').value==177
         app.number_input(key='observations').set_value(40).run()
         assert not app.exception
         assert len(app.metric)==3
         assert any('approximate dates' in item.value for item in app.markdown)
+        assert app.selectbox(key='observation_frequency').value=='Unknown'
+        app.text_input(key='time_start').set_value('2026-04-27').run()
+        assert not app.exception
+        assert app.number_input(key='observations').value==40  # A manual choice is preserved.
         app.selectbox(key='observation_frequency').select('Daily').run()
         assert not app.exception
         assert len(app.metric)==3
-        overview=next(item.value for item in app.markdown if '**40 sampled points' in item.value)
-        assert 'daily chart' in overview
-        assert '27 Apr 2026 – 23 Oct 2026' in overview
+        assert app.number_input(key='observations').value==181  # Daily resumes automatic calculation.
+        overview=next(item.value for item in app.markdown if '**181 sampled points' in item.value)
+        assert 'daily sampling' in overview
+        assert '27 Apr 2026 – 24 Oct 2026' in overview
         assert '18:00' not in overview
         import json
         charts=[json.loads(chart.proto.spec) for chart in app.get('plotly_chart')]
         forecast=charts[1]
         assert forecast['data'][1]['customdata'][1]=='Sample +1'
         assert 'Sample +5' in forecast['layout']['xaxis']['ticktext']
-        assert forecast['layout']['title']['text']=='Forecast from 40 sampled points'
+        assert forecast['layout']['title']['text']=='Forecast from 181 sampled points'
         assert all(':' not in label for label in forecast['data'][0]['customdata'])
+        app.text_input(key='time_end').set_value('2027-04-27').run()
+        assert not app.exception
+        assert app.number_input(key='observations').value==366
+        assert not app.metric
+        assert any('supports up to 300' in item.value for item in app.warning)
+        app.text_input(key='time_end').set_value('2026-04-29').run()
+        assert not app.exception
+        assert app.number_input(key='observations').value==3
+        assert not app.metric  # Three daily points are insufficient to forecast.
+        app.text_input(key='time_end').set_value('2026-05-03').run()
+        assert not app.exception
+        assert app.number_input(key='observations').value==7
+        assert len(app.metric)==3
         # A different image must not inherit the user's daily sampling confirmation.
         app.radio(key='input_mode').set_value('Demo').run()
         assert not app.exception

@@ -88,16 +88,19 @@ def _leading_extension(crop, first_x, first_y):
     return x,y
 
 
-def _open_plot_area(image):
+def _open_plot_area(image, faint_grid=False):
     height,width = image.shape[:2]
     gray = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
-    edges = cv2.Canny(gray,5,20)
+    edges = cv2.Canny(gray,1 if faint_grid else 5,5 if faint_grid else 20)
     joined = cv2.morphologyEx(edges,cv2.MORPH_CLOSE,np.ones((1,9),np.uint8))
     horizontal = cv2.morphologyEx(joined,cv2.MORPH_OPEN,np.ones((1,max(31,width//4)|1),np.uint8))
     _,_,stats,_ = cv2.connectedComponentsWithStats(horizontal,8)
     segments = [s for s in stats[1:] if s[2] >= .5*width and s[3] <= 4]
     if segments:
-        right_edge = float(np.median([s[0]+s[2] for s in segments]))
+        # Partial fills create short edges at the current price; use the longest
+        # panel line as the right-edge anchor, retaining partially obscured gridlines.
+        longest = max(segments,key=lambda segment:segment[2])
+        right_edge = float(longest[0]+longest[2])
         segments = [s for s in segments if abs(s[0]+s[2]-right_edge) <= .12*width]
     rows = []
     for s in sorted(segments,key=lambda s:s[1]):
@@ -126,6 +129,8 @@ def _open_plot_area(image):
                 if best is None or rank > best[0]:
                     best = (rank,selected)
     if best is None:
+        if not faint_grid:
+            return _open_plot_area(image,faint_grid=True)
         raise ValueError('Could not identify plot borders or a consistent grid. Adjust the rectangle manually.')
     top,bottom = float(best[1][0]),float(best[1][-1])
     spacing = float(np.median(np.diff(best[1])))
@@ -186,7 +191,7 @@ def detect_plot_area(image):
     return candidates[0][1]
 
 
-def extract(image, bounds, axes, count, color, distance=90):
+def extract(image, bounds, axes, count, color, distance=90, pixel_positions=None):
     if image.ndim != 3 or image.shape[2] < 3:
         raise ValueError('Use an RGB chart image.')
     if isinstance(count, bool) or not isinstance(count, (int, np.integer)):
@@ -231,7 +236,9 @@ def extract(image, bounds, axes, count, color, distance=90):
                 extra_y.append(float(candidates[np.argmin(abs(candidates-rows[0]))]))
         columns = np.r_[extra_x,columns]
         rows = extra_y+rows
-    px = np.linspace(0,right-left,count)
+    px = np.linspace(0,right-left,count) if pixel_positions is None else np.asarray(pixel_positions,dtype=float)-left
+    if (px.shape!=(count,) or not np.isfinite(px).all() or px[0]<0 or px[-1]>right-left or np.any(np.diff(px)<=0)):
+        raise ValueError('Sampling positions must increase inside the plot rectangle.')
     py = np.interp(px,columns,rows)+top
     result = pd.DataFrame({'time':np.linspace(xmin,xmax,count), 'value':ymax-(py-top)/(bottom-top)*(ymax-ymin), 'pixel_x':px+left,'pixel_y':py})
     result.attrs['curve_coverage'] = len(columns)/width

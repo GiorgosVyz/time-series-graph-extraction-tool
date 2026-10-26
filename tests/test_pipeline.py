@@ -26,8 +26,8 @@ def test_rolling_no_leakage():
 
 
 def test_metrics_and_invalid():
-    assert summarize([-3,4],3)['Historical failure rate']==0.5
-    assert summarize([-3,4],3)['MAE']==3.5
+    assert summarize([-3,4],3,[100,100])['Historical failure rate']==0.5
+    assert summarize([-3,4],3,[100,100])['MAE']==3.5
     with pytest.raises(ValueError): predict([1,np.nan,2,3],2)
     with pytest.raises(ValueError): backtest(np.arange(10),5,8)
 
@@ -84,7 +84,7 @@ def test_invalid_series(values):
 
 def test_nonfinite_tolerance():
     with pytest.raises(ValueError):
-        summarize([1,2], np.nan)
+        summarize([1,2], np.nan,[100,100])
 
 
 @pytest.mark.parametrize('name', ['trend','wave','shift'])

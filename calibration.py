@@ -146,15 +146,20 @@ def read_calibration(image, bounds):
     bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     with _LOCK:
         output = _engine()(cv2.resize(bgr, None, fx=scale, fy=scale), return_word_box=True)
+    full_lines = [] if output.txts is None else [
+        (text,score,np.asarray(box)/scale) for text,score,box in zip(output.txts,output.scores,output.boxes)]
+    # Keep complete temporal labels: dropping PM turns 1:00 PM into 01:00.
+    temporal_lines = [line for line in full_lines
+                      if any(parse_label(line[0],kind) is not None for kind in ('date','clock','month_day'))]
+    temporal_boxes = [(box.min(axis=0),box.max(axis=0)) for _,_,box in temporal_lines]
     labels = []
     for line in (output.word_results or ()):
         for text, score, box in line:
             if box is not None:
-                labels.append((text, score, np.asarray(box)/scale))
-    if not labels and output.txts is not None:
-        labels = [(text, score, box/scale) for text, score, box in zip(output.txts, output.scores, output.boxes)]
-    # Dates containing spaces are one label, even if word-level OCR splits them.
-    if output.txts is not None:
-        labels.extend((text, score, box/scale) for text,score,box in zip(output.txts,output.scores,output.boxes)
-                      if parse_label(text, 'date') is not None)
+                word_box = np.asarray(box)/scale
+                center = word_box.mean(axis=0)
+                if any(np.all(center >= low-1) and np.all(center <= high+1) for low,high in temporal_boxes):
+                    continue
+                labels.append((text, score, word_box))
+    labels = labels+temporal_lines if labels else full_lines
     return axes_from_labels(labels, bounds)

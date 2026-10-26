@@ -1,0 +1,11 @@
+[theme]
+base = "light"
+primaryColor = "#0F766E"
+backgroundColor = "#F8F7F4"
+secondaryBackgroundColor = "#EEF2F0"
+textColor = "#20343C"
+borderColor = "#D8E1DD"
+font = "Segoe UI, Arial, sans-serif"
+headingFont = "Segoe UI, Arial, sans-serif"
+baseRadius = "0.6rem"
+buttonRadius = "0.5rem"

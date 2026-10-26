@@ -1,0 +1,75 @@
+/* Presentation only: keep Streamlit's native controls and responsive layout. */
+[data-testid="stAppViewContainer"] {
+    background: #f8f7f4;
+}
+
+[data-testid="stHeader"] {
+    background: #f8f7f4;
+}
+
+[data-testid="stMainBlockContainer"] {
+    padding-top: 2.5rem;
+    padding-bottom: 3rem;
+}
+
+h1 {
+    color: #20343c;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: 650;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+}
+
+h1::after {
+    content: "";
+    display: block;
+    width: 3rem;
+    height: 0.25rem;
+    margin-top: 1rem;
+    border-radius: 1rem;
+    background: #0f766e;
+}
+
+h3 {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin-top: 1.25rem;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid #d8e1dd;
+}
+
+[data-testid="stFileUploaderDropzone"] {
+    background: #ffffff;
+    border: 1px dashed #93b6ad;
+    border-radius: 0.75rem;
+}
+
+[data-testid="stExpander"] {
+    background: #ffffff;
+    border-radius: 0.6rem;
+}
+
+[data-testid="stMetric"] {
+    background: #ffffff;
+    border: 1px solid #d8e1dd;
+    border-top: 3px solid #0f766e;
+    border-radius: 0.75rem;
+    padding: 1rem 1.15rem;
+}
+
+[data-testid="stMetricValue"] {
+    color: #0f766e;
+    font-variant-numeric: tabular-nums;
+}
+
+[data-testid="stPlotlyChart"] {
+    background: #ffffff;
+    border: 1px solid #d8e1dd;
+    border-radius: 0.75rem;
+    overflow: hidden;
+}
+
+[data-testid="stDownloadButton"] button {
+    font-weight: 600;
+}
